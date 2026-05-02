@@ -1,24 +1,24 @@
 default_agent: atomicAquaLangGraph_Agent
 agents:
   atomicAquaLangGraph_Agent:
-    name: atomicAquaLangGraph_Agent
+    name: atomicAquaLangGraph_Agentthis
     language: python
     node_version: null
-    entrypoint: D:\Bedrock files\atomicAquaLangGraph\src\main.py
+    entrypoint: D:\Bedrock files\AI-POC\atomicAquaLangGraph\src\main.py
     deployment_type: direct_code_deploy
     runtime_type: PYTHON_3_10
     platform: linux/amd64
     container_runtime: null
-    source_path: D:\Bedrock files\atomicAquaLangGraph\src
+    source_path: D:\Bedrock files\AI-POC\atomicAquaLangGraph\src
     aws:
-      execution_role: null
-      execution_role_auto_create: true
-      account: null
-      region: null
+      execution_role: arn:aws:iam::767398019214:role/AmazonBedrockAgentCoreSDKRuntime-ap-south-1-b244141cb9
+      execution_role_auto_create: false
+      account: '767398019214'
+      region: ap-south-1
       ecr_repository: null
       ecr_auto_create: false
-      s3_path: null
-      s3_auto_create: true
+      s3_path: s3://bedrock-agentcore-codebuild-sources-767398019214-ap-south-1
+      s3_auto_create: false
       network_configuration:
         network_mode: PUBLIC
         network_mode_config: null
@@ -27,23 +27,83 @@ agents:
       observability:
         enabled: true
       lifecycle_configuration:
-        idle_runtime_session_timeout: null
-        max_lifetime: null
+        idle_runtime_session_timeout: 60
+        max_lifetime: 2880
     bedrock_agentcore:
-      agent_id: null
-      agent_arn: null
-      agent_session_id: null
+      agent_id: atomicAquaLangGraph_Agent-ADIW4YEOjJ
+      agent_arn: arn:aws:bedrock-agentcore:ap-south-1:767398019214:runtime/atomicAquaLangGraph_Agent-ADIW4YEOjJ
+      agent_session_id: 18d2e80f-9cf5-4ce4-84b7-4f64b0845d62
     codebuild:
       project_name: null
       execution_role: null
       source_bucket: null
     memory:
-      mode: NO_MEMORY
-      memory_id: null
-      memory_arn: null
-      memory_name: null
+      mode: STM_AND_LTM
+      memory_id: memory_rrdvt-eXoXh1Av60
+      memory_arn: arn:aws:bedrock-agentcore:us-east-1:767398019214:memory/memory_rrdvt-eXoXh1Av60
+      memory_name: memory_rrdvt
       event_expiry_days: 30
-      first_invoke_memory_check_done: false
+      first_invoke_memory_check_done: true
+      was_created_by_toolkit: false
+    identity:
+      credential_providers: []
+      workload: null
+    aws_jwt:
+      enabled: false
+      audiences: []
+      signing_algorithm: ES384
+      issuer_url: null
+      duration_seconds: 300
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: true
+  atomicAquaLangGraph_Agentthis:
+    name: atomicAquaLangGraph_Agentthis
+    language: python
+    node_version: null
+    entrypoint: D:\Bedrock files\AI-POC\atomicAquaLangGraph\src\main.py
+    deployment_type: direct_code_deploy
+    runtime_type: PYTHON_3_10
+    platform: linux/amd64
+    container_runtime: null
+    source_path: D:\Bedrock files\AI-POC\atomicAquaLangGraph\src
+    aws:
+      execution_role: arn:aws:iam::767398019214:role/AmazonBedrockAgentCoreSDKRuntime-ap-south-1-b244141cb9
+      execution_role_auto_create: false
+      account: '767398019214'
+      region: ap-south-1
+      ecr_repository: null
+      ecr_auto_create: false
+      s3_path: s3://bedrock-agentcore-codebuild-sources-767398019214-ap-south-1
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: HTTP
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: 60
+        max_lifetime: 2880
+    bedrock_agentcore:
+      agent_id: atomicAquaLangGraph_Agent-ADIW4YEOjJ
+      agent_arn: arn:aws:bedrock-agentcore:ap-south-1:767398019214:runtime/atomicAquaLangGraph_Agent-ADIW4YEOjJ
+      agent_session_id: 18d2e80f-9cf5-4ce4-84b7-4f64b0845d62
+    codebuild:
+      project_name: null
+      execution_role: null
+      source_bucket: null
+    memory:
+      mode: STM_AND_LTM
+      memory_id: memory_rrdvt-eXoXh1Av60
+      memory_arn: arn:aws:bedrock-agentcore:us-east-1:767398019214:memory/memory_rrdvt-eXoXh1Av60
+      memory_name: memory_rrdvt
+      event_expiry_days: 30
+      first_invoke_memory_check_done: true
       was_created_by_toolkit: false
     identity:
       credential_providers: []
