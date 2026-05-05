@@ -36,12 +36,60 @@ Fixes applied vs previous version:
 """
 
 from langgraph.errors import GraphRecursionError
-from bedrock_agentcore import BedrockAgentCoreApp
-from bedrock_agentcore.memory.client import MemoryClient
+
+# ── Bedrock App ─────────────────────────────────────────────
+try:
+    from bedrock_agentcore import BedrockAgentCoreApp
+    app = BedrockAgentCoreApp()
+except ImportError:
+    print("[WARN] bedrock_agentcore not found, using dummy app")
+
+    class DummyApp:
+        def entrypoint(self, func):
+            return func
+
+    app = DummyApp()
+
+# ── Memory Client ───────────────────────────────────────────
+try:
+    from bedrock_agentcore.memory.client import MemoryClient
+except ImportError:
+    print("[WARN] MemoryClient not available, using dummy")
+
+    class MemoryClient:
+        def list_events(self, *args, **kwargs):
+            return []
+
+        def create_event(self, *args, **kwargs):
+            pass
+
+# ── get_memory_client ───────────────────────────────────────
+try:
+    from bedrock_agentcore import get_memory_client
+except ImportError:
+    def get_memory_client():
+        return MemoryClient()
+
+# ── get_s3_client ───────────────────────────────────────────
+try:
+    from bedrock_agentcore import get_s3_client
+except ImportError:
+    def get_s3_client():
+        class DummyS3:
+            def get_object(self, *args, **kwargs):
+                return {
+                    "Body": type("DummyBody", (), {
+                        "read": lambda self: b""
+                    })()
+                }
+        return DummyS3()
+
+# ── Remaining Imports ───────────────────────────────────────
 from src.model.load import load_model
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain.tools import tool
 from langgraph.prebuilt import create_react_agent
+
 import boto3
 import base64
 import os
@@ -53,6 +101,7 @@ import tempfile
 import datetime
 import contextvars
 import pandas as pd
+
 from collections import Counter
 from botocore.config import Config as BotocoreConfig
 from urllib.parse import urlparse
@@ -640,12 +689,23 @@ def _build_event_index(df: pd.DataFrame) -> dict:
 
 def ingest_log_file(file_bytes: bytes, filename: str, session_id: str) -> dict:
     t0   = time.time()
-    text = file_bytes.decode("utf-8", errors="replace")
-    lines = [l for l in text.splitlines() if l.strip()]
-    print(f"[INGEST] File has {len(lines)} non-empty lines. First 10:")
-    for i, l in enumerate(lines[:10]):
-        print(f"  [{i}] {l[:300]}")
-    df = parse_novatel_ascii(text)
+    text = file_bytes.decode("utf-8", errors="ignore")
+
+# Step 1: split lines
+    lines = text.splitlines()
+
+# Step 2: 🔥 FILTER only valid log lines
+    filtered_lines = [
+    l for l in lines
+        if l.strip() and l.startswith("#")
+    ]
+
+    print(f"[INGEST] Total lines: {len(lines)}, Filtered lines: {len(filtered_lines)}")
+
+# Step 3: send only filtered text to parser
+    filtered_text = "\n".join(filtered_lines)
+
+    df = parse_novatel_ascii(filtered_text)
 
     if df.empty:
         sample = "\n".join(lines[:5])
@@ -1494,27 +1554,31 @@ def upload_to_s3(content: bytes, filename: str) -> str:
 
 @app.entrypoint
 async def invoke(payload):
-    if isinstance(payload, dict):
-        prompt     = payload.get("prompt", "")
-        file_b64   = payload.get("file", None)
-        s3_key_in  = payload.get("s3_key", None)
-        filename   = payload.get("filename", "log.txt")
-        session_id = payload.get("session_id", "default-session")
-    else:
-        prompt     = str(payload)
-        file_b64   = None
-        s3_key_in  = None
-        filename   = "log.txt"
-        session_id = "default-session"
+    try:
+        # ── Payload parsing ─────────────────────────────────────
+        if isinstance(payload, dict):
+            prompt     = payload.get("prompt", "")
+            file_b64   = payload.get("file", None)
+            file_bytes = payload.get("file_bytes", None)
+            s3_key_in  = payload.get("s3_key", None)
+            filename   = payload.get("filename", "log.txt")
+            session_id = payload.get("session_id", "default-session")
+        else:
+            prompt     = str(payload)
+            file_b64   = None
+            file_bytes = None
+            s3_key_in  = None
+            filename   = "log.txt"
+            session_id = "default-session"
 
-    # ── File via base64 ───────────────────────────────────────────────
-    if file_b64:
-        try:
-            file_bytes = base64.b64decode(file_b64)
-            if S3_BUCKET and len(file_bytes) > SIZE_THRESHOLD:
-                upload_to_s3(file_bytes, filename)
+        # ── File via raw bytes (FAST PATH) ──────────────────────
+        if file_bytes:
+            import time
+            start = time.time()
 
             info = ingest_log_file(file_bytes, filename, session_id)
+
+            print("INGEST TIME:", time.time() - start)
 
             return {
                 "reply": (
@@ -1523,107 +1587,110 @@ async def invoke(payload):
                 )
             }
 
-        except Exception as e:
-            return {"reply": f"Error parsing log file: {e}"}
-
-    # ── File already in S3 ────────────────────────────────────────────
-    elif s3_key_in:
-        try:
-            obj        = get_s3_client().get_object(Bucket=S3_BUCKET, Key=s3_key_in)
-            file_bytes = obj["Body"].read()
-
-            info = ingest_log_file(file_bytes, filename, session_id)
-
-            return {
-                "reply": (
-                    f"Parsed '{info['filename']}': {info['records']} records across "
-                    f"{info['log_types']} log types.\n\n{info['summary']}"
+        # ── File already in S3 ──────────────────────────────────
+        if s3_key_in:
+            try:
+                obj = get_s3_client().get_object(
+                    Bucket=S3_BUCKET,
+                    Key=s3_key_in
                 )
-            }
+                file_bytes = obj["Body"].read()
 
-        except Exception as e:
-            return {"reply": f"Error reading from S3: {e}"}
+                info = ingest_log_file(file_bytes, filename, session_id)
 
-    # ── Q&A path ──────────────────────────────────────────────────────
-    print(f"[QA] prompt={prompt!r} session_id={session_id!r}")
+                return {
+                    "reply": (
+                        f"Parsed '{info['filename']}': {info['records']} records across "
+                        f"{info['log_types']} log types.\n\n{info['summary']}"
+                    )
+                }
 
-    try:
-        apply_guardrail(prompt, source="INPUT")
-    except ValueError as e:
-        return {"reply": str(e)}
+            except Exception as e:
+                return {"reply": f"Error reading from S3: {e}"}
 
-    _current_session_var.set(session_id)
+        # ── Q&A path ────────────────────────────────────────────
+        print(f"[QA] prompt={prompt!r} session_id={session_id!r}")
 
-    # ── Load memory ───────────────────────────────────────────────────
-    history = []
-    if MEMORY_ID:
         try:
-            events = get_memory_client().list_events(
-                memory_id=MEMORY_ID,
-                actor_id=ACTOR_ID,
-                session_id=session_id,
-                max_results=10,
-            )
-            for event in events:
-                for item in event.get("payload", []):
-                    conv = item.get("conversational", {})
-                    role = conv.get("role", "")
-                    text = conv.get("content", {}).get("text", "")
-                    if role == "USER":
-                        history.append(HumanMessage(content=text))
-                    elif role == "ASSISTANT":
-                        history.append(AIMessage(content=text))
-        except Exception as e:
-            print(f"Memory retrieve error: {e}")
+            apply_guardrail(prompt, source="INPUT")
+        except ValueError as e:
+            return {"reply": str(e)}
 
-    if len(history) > 6:
-        history = history[-6:]
+        _current_session_var.set(session_id)
 
-    # ── Direct handlers ───────────────────────────────────────────────
-    log_entry = _log_store.get(session_id)
-
-    if log_entry:
-        p_lower = prompt.lower()
-
-        # List logs
-        if any(k in p_lower for k in (
-            "list", "what log", "all log", "log type", "instance"
-        )):
-            df = log_entry["df"]
-            log_counts = df.groupby("log_name_raw").size().sort_values(ascending=False)
-
-            lines = [f"| {name} | {count} |" for name, count in log_counts.items()]
-            table = "| Log Type | Count |\n|---|---|\n" + "\n".join(lines)
-
-            return {
-                "reply": (
-                    f"**{len(log_counts)} log types** in `{log_entry['filename']}`:\n\n{table}"
+        # ── Load memory ─────────────────────────────────────────
+        history = []
+        if MEMORY_ID:
+            try:
+                events = get_memory_client().list_events(
+                    memory_id=MEMORY_ID,
+                    actor_id=ACTOR_ID,
+                    session_id=session_id,
+                    max_results=10,
                 )
-            }
+                for event in events:
+                    for item in event.get("payload", []):
+                        conv = item.get("conversational", {})
+                        role = conv.get("role", "")
+                        text = conv.get("content", {}).get("text", "")
+                        if role == "USER":
+                            history.append(HumanMessage(content=text))
+                        elif role == "ASSISTANT":
+                            history.append(AIMessage(content=text))
+            except Exception as e:
+                print(f"Memory retrieve error: {e}")
 
-    # ── Agent path ────────────────────────────────────────────────────
-    try:
-        output = run_agent(prompt, history)
-    except GraphRecursionError:
-        return {"reply": "Agent hit recursion limit. Try a simpler query."}
+        # Trim history
+        if len(history) > 6:
+            history = history[-6:]
+
+        # ── Direct handlers (log queries) ───────────────────────
+        log_entry = _log_store.get(session_id)
+
+        if log_entry:
+            p_lower = prompt.lower()
+
+            if any(k in p_lower for k in (
+                "list", "what log", "all log", "log type", "instance"
+            )):
+                df = log_entry["df"]
+                log_counts = df.groupby("log_name_raw").size().sort_values(ascending=False)
+
+                lines = [f"| {name} | {count} |" for name, count in log_counts.items()]
+                table = "| Log Type | Count |\n|---|---|\n" + "\n".join(lines)
+
+                return {
+                    "reply": (
+                        f"**{len(log_counts)} log types** in `{log_entry['filename']}`:\n\n{table}"
+                    )
+                }
+
+        # ── Agent path ─────────────────────────────────────────
+        try:
+            output = run_agent(prompt, history)
+        except GraphRecursionError:
+            return {"reply": "Agent hit recursion limit. Try a simpler query."}
+        except Exception as e:
+            return {"reply": f"Agent error: {e}"}
+
+        try:
+            apply_guardrail(output, source="OUTPUT")
+        except ValueError as e:
+            return {"reply": str(e)}
+
+        # ── Save memory ────────────────────────────────────────
+        if MEMORY_ID:
+            try:
+                get_memory_client().create_event(
+                    memory_id=MEMORY_ID,
+                    actor_id=ACTOR_ID,
+                    session_id=session_id,
+                    messages=[(prompt, "USER"), (output, "ASSISTANT")],
+                )
+            except Exception as e:
+                print(f"Memory save error: {e}")
+
+        return {"reply": output}
+
     except Exception as e:
-        return {"reply": f"Agent error: {e}"}
-
-    try:
-        apply_guardrail(output, source="OUTPUT")
-    except ValueError as e:
         return {"reply": str(e)}
-
-    # Save memory
-    if MEMORY_ID:
-        try:
-            get_memory_client().create_event(
-                memory_id=MEMORY_ID,
-                actor_id=ACTOR_ID,
-                session_id=session_id,
-                messages=[(prompt, "USER"), (output, "ASSISTANT")],
-            )
-        except Exception as e:
-            print(f"Memory save error: {e}")
-
-    return {"reply": output}
